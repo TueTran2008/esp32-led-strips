@@ -6,6 +6,7 @@
  * TueTD customization
  */
 #include "driver/gpio.h"
+#include "driver/rmt_rx.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_event_base.h"
@@ -14,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "ir_nec_encoder.h"
 #include "led_strip.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -34,9 +36,31 @@ ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_3_BASE);
 
 ESP_EVENT_DECLARE_BASE(LED_1_EVENT_BASE);
 ESP_EVENT_DEFINE_BASE(LED_1_EVENT_BASE);
+ESP_EVENT_DECLARE_BASE(LED_2_EVENT_BASE);
+ESP_EVENT_DEFINE_BASE(LED_2_EVENT_BASE);
+ESP_EVENT_DECLARE_BASE(LED_3_EVENT_BASE);
+ESP_EVENT_DEFINE_BASE(LED_3_EVENT_BASE);
+ESP_EVENT_DECLARE_BASE(LED_4_EVENT_BASE);
+ESP_EVENT_DEFINE_BASE(LED_4_EVENT_BASE);
 
 ESP_EVENT_DECLARE_BASE(TIMER_EVENT_BASE);
 ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
+
+#define EXAMPLE_IR_RX_GPIO_NUM 19
+#define EXAMPLE_IR_RESOLUTION_HZ 1000000 // 1MHz resolution, 1 tick = 1us
+#define EXAMPLE_IR_NEC_DECODE_MARGIN 200 // Tolerance for parsing RMT symbols into bit stream
+
+/**
+ * @brief NEC timing spec
+ */
+#define NEC_LEADING_CODE_DURATION_0 9000
+#define NEC_LEADING_CODE_DURATION_1 4500
+#define NEC_PAYLOAD_ZERO_DURATION_0 560
+#define NEC_PAYLOAD_ZERO_DURATION_1 560
+#define NEC_PAYLOAD_ONE_DURATION_0 560
+#define NEC_PAYLOAD_ONE_DURATION_1 1690
+#define NEC_REPEAT_CODE_DURATION_0 9000
+#define NEC_REPEAT_CODE_DURATION_1 2250
 
 /*
  * Maximum numbers of the LED in the strip
@@ -58,12 +82,12 @@ ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
  * MCU IO level HIGH -> Output 5V
  * MCO IO Level LOW -> Output 0
  */
-#define LED_EN_PORT_POWER_1 32
-#define LED_EN_PORT_POWER_2 33
-#define LED_EN_PORT_POWER_3 25
-#define LED_EN_PORT_POWER_4 26
-#define LED_EN_PORT_POWER_5 27
-#define LED_EN_PORT_POWER_6 14
+#define LED_EN_PORT_POWER_1 GPIO_NUM_32
+#define LED_EN_PORT_POWER_2 GPIO_NUM_33
+#define LED_EN_PORT_POWER_3 GPIO_NUM_25
+#define LED_EN_PORT_POWER_4 GPIO_NUM_26
+#define LED_EN_PORT_POWER_5 GPIO_NUM_27
+#define LED_EN_PORT_POWER_6 GPIO_NUM_14
 
 #define PORT_ON 1
 #define PORT_OFF 0
@@ -112,20 +136,135 @@ static const gpio_num_t led_strip_data_pin[LED_STRIP_NUMBER_OF_STRIP] = {
     LED_STRIP_DATA_PIN_3,
     LED_STRIP_DATA_PIN_4,
 };
-static const gpio_num_t port_en_pin[PORT_NUMBER] = {
-    LED_EN_PORT_POWER_1, LED_EN_PORT_POWER_2, LED_EN_PORT_POWER_3,
-    LED_EN_PORT_POWER_4, LED_EN_PORT_POWER_5, LED_EN_PORT_POWER_6,
-};
+/**
+ * @brief Saving NEC decode results
+ */
+static uint16_t s_nec_code_address;
+static uint16_t s_nec_code_command;
+static rmt_rx_channel_config_t rx_channel_cfg;
+static rmt_channel_handle_t rx_channel = NULL;
+static QueueHandle_t receive_queue;
+static rmt_receive_config_t receive_config;
 
 typedef enum { TIMER_EVENT_ID_TIMEOUT_500MS, TIMER_EVENT_ID_TIMEOUT_10S } timer_event_id_t;
 
 static led_strip_t led_strip[LED_STRIP_NUMBER_OF_STRIP];
 // static QueueHandle_t led_status_queue[LED_STRIP_NUMBER_OF_STRIP]; // Queue handle
-static led_behavior_t leds_bahavior[LED_STRIP_NUMBER_OF_STRIP];
+static led_behavior_t leds_behavior[LED_STRIP_NUMBER_OF_STRIP];
 
 //
 /**/
 static esp_event_loop_handle_t event_loop_handle;
+
+/**
+ * @brief Check whether a duration is within expected range
+ */
+static inline bool nec_check_in_range(uint32_t signal_duration, uint32_t spec_duration) {
+    return (signal_duration < (spec_duration + EXAMPLE_IR_NEC_DECODE_MARGIN)) &&
+           (signal_duration > (spec_duration - EXAMPLE_IR_NEC_DECODE_MARGIN));
+}
+
+/**
+ * @brief Check whether a RMT symbol represents NEC logic zero
+ */
+static bool nec_parse_logic0(rmt_symbol_word_t *rmt_nec_symbols) {
+    return nec_check_in_range(rmt_nec_symbols->duration0, NEC_PAYLOAD_ZERO_DURATION_0) &&
+           nec_check_in_range(rmt_nec_symbols->duration1, NEC_PAYLOAD_ZERO_DURATION_1);
+}
+
+/**
+ * @brief Check whether a RMT symbol represents NEC logic one
+ */
+static bool nec_parse_logic1(rmt_symbol_word_t *rmt_nec_symbols) {
+    return nec_check_in_range(rmt_nec_symbols->duration0, NEC_PAYLOAD_ONE_DURATION_0) &&
+           nec_check_in_range(rmt_nec_symbols->duration1, NEC_PAYLOAD_ONE_DURATION_1);
+}
+
+/**
+ * @brief Decode RMT symbols into NEC address and command
+ */
+static bool nec_parse_frame(rmt_symbol_word_t *rmt_nec_symbols) {
+    rmt_symbol_word_t *cur = rmt_nec_symbols;
+    uint16_t address = 0;
+    uint16_t command = 0;
+    bool valid_leading_code = nec_check_in_range(cur->duration0, NEC_LEADING_CODE_DURATION_0) &&
+                              nec_check_in_range(cur->duration1, NEC_LEADING_CODE_DURATION_1);
+    if (!valid_leading_code) {
+        return false;
+    }
+    cur++;
+    for (int i = 0; i < 16; i++) {
+        if (nec_parse_logic1(cur)) {
+            address |= 1 << i;
+        } else if (nec_parse_logic0(cur)) {
+            address &= ~(1 << i);
+        } else {
+            return false;
+        }
+        cur++;
+    }
+    for (int i = 0; i < 16; i++) {
+        if (nec_parse_logic1(cur)) {
+            command |= 1 << i;
+        } else if (nec_parse_logic0(cur)) {
+            command &= ~(1 << i);
+        } else {
+            return false;
+        }
+        cur++;
+    }
+    // save address and command
+    s_nec_code_address = address;
+    s_nec_code_command = command;
+    return true;
+}
+
+/**
+ * @brief Check whether the RMT symbols represent NEC repeat code
+ */
+static bool nec_parse_frame_repeat(rmt_symbol_word_t *rmt_nec_symbols) {
+    return nec_check_in_range(rmt_nec_symbols->duration0, NEC_REPEAT_CODE_DURATION_0) &&
+           nec_check_in_range(rmt_nec_symbols->duration1, NEC_REPEAT_CODE_DURATION_1);
+}
+
+/**
+ * @brief Decode RMT symbols into NEC scan code and print the result
+ */
+static void example_parse_nec_frame(rmt_symbol_word_t *rmt_nec_symbols, size_t symbol_num) {
+    printf("NEC frame start---\r\n");
+    for (size_t i = 0; i < symbol_num; i++) {
+        printf("{%d:%d},{%d:%d}\r\n", rmt_nec_symbols[i].level0, rmt_nec_symbols[i].duration0,
+               rmt_nec_symbols[i].level1, rmt_nec_symbols[i].duration1);
+    }
+    printf("---NEC frame end: ");
+    // decode RMT symbols
+    switch (symbol_num) {
+    case 34: // NEC normal frame
+        if (nec_parse_frame(rmt_nec_symbols)) {
+            printf("Address=%04X, Command=%04X\r\n\r\n", s_nec_code_address, s_nec_code_command);
+        }
+        break;
+    case 2: // NEC repeat frame
+        if (nec_parse_frame_repeat(rmt_nec_symbols)) {
+            printf("Address=%04X, Command=%04X, repeat\r\n\r\n", s_nec_code_address, s_nec_code_command);
+        }
+        break;
+    default:
+        printf("Unknown NEC frame\r\n\r\n");
+        break;
+    }
+}
+
+static bool example_rmt_rx_done_callback(rmt_channel_handle_t channel, const rmt_rx_done_event_data_t *edata,
+                                         void *user_data) {
+    BaseType_t high_task_wakeup = pdFALSE;
+    QueueHandle_t receive_queue = (QueueHandle_t)user_data;
+    // send the received RMT symbols to the parser task
+    xQueueSendFromISR(receive_queue, edata, &high_task_wakeup);
+    return high_task_wakeup == pdTRUE;
+}
+///////////////////////////////////////END OF IR CODE////////////////////////////////////////////////////////
+///////////////////////////////////////START LED CODE////////////////////////////////////////////////////////
 
 /*
  * @brief initialization the RGB Led pin and RMT peripheral drivers
@@ -143,7 +282,7 @@ void configure_led(void) {
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
         .resolution_hz = LED_STRIP_RMT_RES_HZ, // RMT counter clock frequency
-        .mem_block_symbols = 64 * 4,           // the memory size of each RMT channel, in words (4 bytes)
+        .mem_block_symbols = 64,               // the memory size of each RMT channel, in words (4 bytes)
         .flags = {
             .with_dma = false, // DMA feature is available on chips like ESP32-S3/P4
         }};
@@ -156,22 +295,23 @@ void configure_led(void) {
 }
 
 void configure_port_en(void) {
-    for (int port_index = 0; port_index < (sizeof(port_en_pin) / sizeof(port_en_pin[0])); port_index++) {
-        gpio_config_t io_conf = {0};
-        // disable interrupt
-        io_conf.intr_type = GPIO_INTR_DISABLE;
-        // set as output mode
-        io_conf.mode = GPIO_MODE_OUTPUT;
-        // bit mask of the pins that you want to set,e.g.GPIO18/19
-        io_conf.pin_bit_mask = port_en_pin[port_index];
-        // disable pull-down mode
+
+    gpio_config_t io_conf = {0};
+    // disable interrupt
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    // set as output mode
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    // bit mask of the pins that you want to set,e.g.GPIO18/19
+    io_conf.pin_bit_mask = (1ULL << LED_EN_PORT_POWER_1) | (1ULL << LED_EN_PORT_POWER_2) |
+                           (1ULL << LED_EN_PORT_POWER_3) | (1ULL << LED_EN_PORT_POWER_4) |
+                           (1ULL << LED_EN_PORT_POWER_5) | (1ULL << LED_EN_PORT_POWER_6),
+    // disable pull-down mode
         io_conf.pull_down_en = 0;
-        // disable pull-up mode
-        io_conf.pull_up_en = 0;
-        // configure GPIO with the given settings
-        gpio_config(&io_conf);
-        ESP_LOGI(TAG, "Configure port enable :%u", (unsigned int)port_en_pin[port_index]);
-    }
+    // disable pull-up mode
+    io_conf.pull_up_en = 0;
+    // configure GPIO with the given settings
+    gpio_config(&io_conf);
+    // ESP_LOGI(TAG, "Configure port enable :%u", (unsigned int)port_en_pin[port_index]);
 }
 /*
  * Control the OUTPUT value of port
@@ -252,20 +392,12 @@ static inline esp_err_t port_en(gpio_num_t port_number, uint32_t level) {
 // }
 static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t *led_behavior,
                          led_strip_handle_t led_handle) {
-    if (base == LED_1_EVENT_BASE) {
-        if (event_id > LED_STATUS_MAX) {
-            ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
-        }
-        led_behavior->led_status = event_id;
-    }
     if (base == LED_1_EVENT_BASE && event_id != LED_STATUS_STEP_ON) {
         led_behavior->led_index = 0;
     }
-    ESP_LOGI(TAG, "Receive event: %d", (int)event_id);
     switch (led_behavior->led_status) {
     case LED_STATUS_ALL_TURN_OFF:
         ESP_ERROR_CHECK(led_strip_clear(led_handle));
-        ESP_LOGI(TAG, "All port 1 led are OFF");
         break;
     case LED_STATUS_ALL_TURN_ON:
         ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, 0, 255, 0, 0));
@@ -325,23 +457,52 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
     }
 }
 /*
- *Port 1 - Led strip with RED color
+
+*Port 1 - Led strip with RED color
  * */
 static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
-    led_behavior(base, event_id, &leds_bahavior[0], led_strip[0].led_handle);
+    if (base == LED_1_EVENT_BASE) {
+        if (event_id > LED_STATUS_MAX) {
+            ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
+        }
+        leds_behavior[0].led_status = event_id;
+    }
+
+    led_behavior(base, event_id, &leds_behavior[0], led_strip[0].led_handle);
 }
 static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
-    led_behavior(base, event_id, &leds_bahavior[1], led_strip[1].led_handle);
+    if (base == LED_2_EVENT_BASE) {
+        if (event_id > LED_STATUS_MAX) {
+            ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
+        }
+        leds_behavior[1].led_status = event_id;
+    }
+
+    led_behavior(base, event_id, &leds_behavior[1], led_strip[1].led_handle);
 }
 static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
-    led_behavior(base, event_id, &leds_bahavior[2], led_strip[2].led_handle);
+    if (base == LED_3_EVENT_BASE) {
+        if (event_id > LED_STATUS_MAX) {
+            ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
+        }
+        leds_behavior[2].led_status = event_id;
+    }
+
+    led_behavior(base, event_id, &leds_behavior[2], led_strip[2].led_handle);
 }
 static void port_4_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
-    led_behavior(base, event_id, &leds_bahavior[3], led_strip[3].led_handle);
+    if (base == LED_4_EVENT_BASE) {
+        if (event_id > LED_STATUS_MAX) {
+            ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
+        }
+        leds_behavior[3].led_status = event_id;
+    }
+
+    led_behavior(base, event_id, &leds_behavior[3], led_strip[3].led_handle);
 }
 static void port_5_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {}
@@ -353,44 +514,99 @@ static void timer_callback(void *arg) {
     esp_event_post_to(event_loop_handle, TIMER_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
                       portMAX_DELAY);
 }
+static void configure_ir(void) {
+    ESP_LOGI(TAG, "create RMT RX channel");
+
+    rx_channel_cfg.clk_src = RMT_CLK_SRC_DEFAULT;
+    rx_channel_cfg.resolution_hz = EXAMPLE_IR_RESOLUTION_HZ;
+    rx_channel_cfg.mem_block_symbols = 64; // amount of RMT symbols that the channel can store at a time
+    rx_channel_cfg.gpio_num = EXAMPLE_IR_RX_GPIO_NUM;
+
+    ESP_ERROR_CHECK(rmt_new_rx_channel(&rx_channel_cfg, &rx_channel));
+
+    ESP_LOGI(TAG, "register RX done callback");
+    receive_queue = xQueueCreate(1, sizeof(rmt_rx_done_event_data_t));
+    if (receive_queue == NULL) {
+        ESP_LOGE(TAG, "Error when create queue");
+    }
+    rmt_rx_event_callbacks_t cbs = {
+        .on_recv_done = example_rmt_rx_done_callback,
+    };
+    ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(rx_channel, &cbs, receive_queue));
+
+    // the following timing requirement is based on NEC protocol
+
+    receive_config.signal_range_min_ns = 1250;     // the shortest duration for NEC signal is 560us, 1250ns <
+                                                   // 560us, valid signal won't be treated as noise
+    receive_config.signal_range_max_ns = 12000000; // the longest duration for NEC signal is 9000us,
+                                                   // 12000000ns > 9000us, the receive won't stop early
+
+    ESP_LOGI(TAG, "install IR NEC encoder");
+    ir_nec_encoder_config_t nec_encoder_cfg = {
+        .resolution = EXAMPLE_IR_RESOLUTION_HZ,
+    };
+    rmt_encoder_handle_t nec_encoder = NULL;
+    ESP_ERROR_CHECK(rmt_new_ir_nec_encoder(&nec_encoder_cfg, &nec_encoder));
+    ESP_ERROR_CHECK(rmt_enable(rx_channel));
+}
+
 void app_main(void) {
-    // configure_port_en();
+
+    // save the received RMT symbols
+    rmt_symbol_word_t raw_symbols[64]; // 64 symbols should be sufficient for a standard NEC frame
+    rmt_rx_done_event_data_t rx_data;
+
+    configure_port_en();
     configure_led();
-    // esp_event_loop_args_t loop_args = {.queue_size = 10,
-    //                                    .task_name = "event_task",
-    //                                    .task_priority = uxTaskPriorityGet(NULL),
-    //                                    .task_stack_size = 4096,
-    //                                    .task_core_id = tskNO_AFFINITY};
-    //
-    // esp_event_loop_create(&loop_args, &event_loop_handle);
-    // // Register event handler
-    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-    //                                          port_1_event_handler, NULL, NULL);
-    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-    //
-    //                                          port_2_event_handler, NULL, NULL);
-    //
-    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-    //                                          port_3_event_handler, NULL, NULL);
-    //
-    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-    //                                          port_4_event_handler, NULL, NULL);
-    //
-    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-    //                                          port_5_event_handler, NULL, NULL);
-    //
-    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-    //                                          port_6_event_handler, NULL, NULL);
-    // // Create a timer
-    // const esp_timer_create_args_t timer_args = {.callback = &timer_callback, .name = "timer_500ms"};
-    //
-    // esp_timer_handle_t timer_handle;
-    // esp_timer_create(&timer_args, &timer_handle);
-    // ESP_LOGI(TAG, " Darwin test");
-    // // Start the timer (fires every 2 seconds)
-    // esp_timer_start_periodic(timer_handle, 5000); // Time in microseconds
+    configure_ir();
+    esp_event_loop_args_t loop_args = {.queue_size = 10,
+                                       .task_name = "event_task",
+                                       .task_priority = uxTaskPriorityGet(NULL),
+                                       .task_stack_size = 4096,
+                                       .task_core_id = tskNO_AFFINITY};
+
+    esp_event_loop_create(&loop_args, &event_loop_handle);
+    // Register event handler
+    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+                                             port_1_event_handler, NULL, NULL);
+    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+
+                                             port_2_event_handler, NULL, NULL);
+
+    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+                                             port_3_event_handler, NULL, NULL);
+
+    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+                                             port_4_event_handler, NULL, NULL);
+
+    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+                                             port_5_event_handler, NULL, NULL);
+
+    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+                                             port_6_event_handler, NULL, NULL);
+    // Create a timer
+    const esp_timer_create_args_t timer_args = {.callback = &timer_callback, .name = "timer_500ms"};
+
+    esp_timer_handle_t timer_handle;
+    esp_timer_create(&timer_args, &timer_handle);
+    // Start the timer (fires every 2 seconds)
+    esp_timer_start_periodic(timer_handle, 5000); // Time in microseconds
+    ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "Darwin Test");
+        // wait for RX done signal
+        if (xQueueReceive(receive_queue, &rx_data, pdMS_TO_TICKS(1000)) == pdPASS) {
+            // parse the receive symbols and print the result
+            example_parse_nec_frame(rx_data.received_symbols, rx_data.num_symbols);
+            // start receive again
+            ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
+        } else {
+            // timeout, transmit predefined IR NEC packets
+            // const ir_nec_scan_code_t scan_code = {
+            //     .address = 0x0440,
+            //     .command = 0x3003,
+            // };
+            // ESP_ERROR_CHECK(
+            //     rmt_transmit(tx_channel, nec_encoder, &scan_code, sizeof(scan_code), &transmit_config));
+        }
     }
 }
