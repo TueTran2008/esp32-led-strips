@@ -11,12 +11,15 @@
 #include "esp_event.h"
 #include "esp_event_base.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "ir_nec_encoder.h"
 #include "led_strip.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -510,7 +513,7 @@ static void port_6_event_handler(void *handler_arg, esp_event_base_t base, int32
                                  void *event_data) {}
 // Timer callback function
 static void timer_callback(void *arg) {
-    printf("Timer expired! Posting event...\n");
+    // printf("Timer expired! Posting event...\n");
     esp_event_post_to(event_loop_handle, TIMER_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
                       portMAX_DELAY);
 }
@@ -550,6 +553,59 @@ static void configure_ir(void) {
     ESP_ERROR_CHECK(rmt_enable(rx_channel));
 }
 
+static void nvs_read() {
+
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // NVS partition was truncated and needs to be erased
+        // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+    printf("\n");
+    printf("Opening Non-Volatile Storage (NVS) handle... ");
+    nvs_handle_t my_handle;
+    err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } else {
+        printf("Done\n");
+
+        // Read
+        printf("Reading restart counter from NVS ... ");
+        int32_t restart_counter = 0; // value will default to 0, if not set yet in NVS
+        err = nvs_get_i32(my_handle, "restart_counter", &restart_counter);
+        switch (err) {
+        case ESP_OK:
+            printf("Done\n");
+            printf("Restart counter = %" PRIu32 "\n", restart_counter);
+            break;
+        case ESP_ERR_NVS_NOT_FOUND:
+            printf("The value is not initialized yet!\n");
+            break;
+        default:
+            printf("Error (%s) reading!\n", esp_err_to_name(err));
+        }
+
+        // Write
+        // printf("Updating restart counter in NVS ... ");
+        // restart_counter++;
+        // err = nvs_set_i32(my_handle, "restart_counter", restart_counter);
+        // printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+        //
+        // // Commit written value.
+        // // After setting any values, nvs_commit() must be called to ensure changes are written
+        // // to flash storage. Implementations may write to storage at other times,
+        // // but this is not guaranteed.
+        // printf("Committing updates in NVS ... ");
+        // err = nvs_commit(my_handle);
+        // printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+        //
+        // // Close
+        nvs_close(my_handle);
+    }
+}
 void app_main(void) {
 
     // save the received RMT symbols
@@ -559,6 +615,8 @@ void app_main(void) {
     configure_port_en();
     configure_led();
     configure_ir();
+
+    nvs_read();
     esp_event_loop_args_t loop_args = {.queue_size = 10,
                                        .task_name = "event_task",
                                        .task_priority = uxTaskPriorityGet(NULL),
