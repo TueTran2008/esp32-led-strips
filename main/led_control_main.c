@@ -10,9 +10,12 @@
 #include "esp_event.h"
 #include "esp_event_base.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "led_strip.h"
+#include <stdbool.h>
 #include <stdio.h>
 
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
@@ -28,6 +31,13 @@ ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_3_BASE);
 ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_1_BASE);
 ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_2_BASE);
 ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_3_BASE);
+
+ESP_EVENT_DECLARE_BASE(LED_1_EVENT_BASE);
+ESP_EVENT_DEFINE_BASE(LED_1_EVENT_BASE);
+
+ESP_EVENT_DECLARE_BASE(TIMER_EVENT_BASE);
+ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
+
 /*
  * Maximum numbers of the LED in the strip
  * Adjust this if you want to increase the number of led in strip
@@ -76,6 +86,24 @@ typedef struct led_strip_t {
     uint32_t led_power_en;
 } led_strip_t;
 
+typedef enum { LED_COLOR_OFF, LED_COLOR_RED, LED_COLOR_BLUE } led_color_t;
+
+typedef enum {
+    LED_STATUS_ALL_TURN_OFF,
+    LED_STATUS_ALL_TURN_ON,
+    LED_STATUS_ALL_BLINK,
+    LED_STATUS_STEP_ON,
+    LED_STATUS_ALL_BLINK_10_SEC,
+    LED_STATUS_MAX
+} led_event_t;
+
+typedef struct {
+    uint32_t led_index;
+    bool led_off_on;
+    bool led_off_on_10_s;
+    led_event_t led_status;
+} led_behavior_t;
+
 static const char *TAG = "led_strips";
 
 static const gpio_num_t led_strip_data_pin[LED_STRIP_NUMBER_OF_STRIP] = {
@@ -89,8 +117,13 @@ static const gpio_num_t port_en_pin[PORT_NUMBER] = {
     LED_EN_PORT_POWER_4, LED_EN_PORT_POWER_5, LED_EN_PORT_POWER_6,
 };
 
-led_strip_t led_strip[LED_STRIP_NUMBER_OF_STRIP];
+typedef enum { TIMER_EVENT_ID_TIMEOUT_500MS, TIMER_EVENT_ID_TIMEOUT_10S } timer_event_id_t;
 
+static led_strip_t led_strip[LED_STRIP_NUMBER_OF_STRIP];
+// static QueueHandle_t led_status_queue[LED_STRIP_NUMBER_OF_STRIP]; // Queue handle
+static led_behavior_t leds_bahavior[LED_STRIP_NUMBER_OF_STRIP];
+
+//
 /**/
 static esp_event_loop_handle_t event_loop_handle;
 
@@ -110,7 +143,7 @@ void configure_led(void) {
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
         .resolution_hz = LED_STRIP_RMT_RES_HZ, // RMT counter clock frequency
-        .mem_block_symbols = 64,               // the memory size of each RMT channel, in words (4 bytes)
+        .mem_block_symbols = 64 * 4,           // the memory size of each RMT channel, in words (4 bytes)
         .flags = {
             .with_dma = false, // DMA feature is available on chips like ESP32-S3/P4
         }};
@@ -150,58 +183,214 @@ static inline esp_err_t port_en(gpio_num_t port_number, uint32_t level) {
     return gpio_set_level(port_number, level);
 }
 
-static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
-                                 void *event_data) {
-    if (base == BUTTON_PRESS_1_BASE) {
-        switch (event_id) {
-        case BUTTON_EVENT_0:
-            port_en(port_en_pin[0], PORT_ON);
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
-            break;
+// Task to blink LED
+// void led_1_task(void *pvParameter) {
+//
+//     while (1) {
+//         if (!on_off) {
+//             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
+//             ESP_ERROR_CHECK(led_strip_refresh(led_strip[0].led_handle));
+//             on_off = false;
+//         } else {
+//         }
+//
+//         vTaskDelay(pdMS_TO_TICKS(500));
+//     }
+// }
+//
+// void led_2_task(void *pvParameter) {
+//
+//     led_event_t status;
+//     while (1) {
+//         if (xQueueReceive(led_status_queue[1], &status, portMAX_DELAY)) {
+//             switch (status) {
+//             case LED_STATUS_ALL_TURN_OFF:
+//                 ESP_ERROR_CHECK(led_strip_clear(led_strip[1].led_handle));
+//                 break;
+//             case LED_STATUS_ALL_TURN_ON:
+//                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[1].led_handle, 0, 255, 0, 0));
+//                 ESP_ERROR_CHECK(led_strip_refresh(led_strip[1].led_handle));
+//                 break;
+//             case LED_STATUS_ALL_BLINK:
+//             case LED_STATUS_STEP_ON:
+//             case LED_STATUS_ALL_TURN_ON_10_SEC:
+//             default:
+//                 break;
+//             }
+//         }
+//
+//         vTaskDelay(pdMS_TO_TICKS(500));
+//     }
+// }
+// void led_3_task(void *pvParameter) {
+//
+//     bool on_off = false;
+//     while (1) {
+//         if (!on_off) {
+//             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
+//             ESP_ERROR_CHECK(led_strip_refresh(led_strip[0].led_handle));
+//             on_off = false;
+//         } else {
+//         }
+//
+//         vTaskDelay(pdMS_TO_TICKS(500));
+//     }
+// }
+// void led_4_task(void *pvParameter) {
+//
+//     bool on_off = false;
+//     while (1) {
+//         if (!on_off) {
+//             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
+//             ESP_ERROR_CHECK(led_strip_refresh(led_strip[0].led_handle));
+//             on_off = false;
+//         } else {
+//         }
+//
+//         vTaskDelay(pdMS_TO_TICKS(500));
+//     }
+// }
+static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t *led_behavior,
+                         led_strip_handle_t led_handle) {
+    if (base == LED_1_EVENT_BASE) {
+        if (event_id > LED_STATUS_MAX) {
+            ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
         }
+        led_behavior->led_status = event_id;
+    }
+    if (base == LED_1_EVENT_BASE && event_id != LED_STATUS_STEP_ON) {
+        led_behavior->led_index = 0;
+    }
+    ESP_LOGI(TAG, "Receive event: %d", (int)event_id);
+    switch (led_behavior->led_status) {
+    case LED_STATUS_ALL_TURN_OFF:
+        ESP_ERROR_CHECK(led_strip_clear(led_handle));
+        ESP_LOGI(TAG, "All port 1 led are OFF");
+        break;
+    case LED_STATUS_ALL_TURN_ON:
+        ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, 0, 255, 0, 0));
+        ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+        break;
+    case LED_STATUS_ALL_BLINK:
+        if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == TIMER_EVENT_BASE) {
+            if (led_behavior->led_off_on) {
+                // Turn on all led
+                for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
+                    ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, i, 255, 0, 0));
+                }
+                ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+                led_behavior->led_off_on = false;
+            } else {
+                led_behavior->led_off_on = true;
+
+                ESP_ERROR_CHECK(led_strip_clear(led_handle));
+            }
+        }
+        break;
+    case LED_STATUS_STEP_ON:
+        if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == TIMER_EVENT_BASE) {
+            ESP_ERROR_CHECK(led_strip_clear(led_handle));
+            ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, led_behavior->led_index, 255, 0, 0));
+            ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+            led_behavior->led_index++;
+        }
+        break;
+    case LED_STATUS_ALL_BLINK_10_SEC:
+        if (base == TIMER_EVENT_BASE) {
+            if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS) {
+                if (led_behavior->led_off_on_10_s) {
+                    // Turn on all led
+                    for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
+                        ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, i, 255, 0, 0));
+                    }
+                    ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+                    led_behavior->led_off_on_10_s = false;
+                } else {
+                    led_behavior->led_off_on_10_s = true;
+                    ESP_ERROR_CHECK(led_strip_clear(led_handle));
+                }
+            } else if (event_id == TIMER_EVENT_ID_TIMEOUT_10S) {
+                led_behavior->led_off_on_10_s = false;
+                ESP_ERROR_CHECK(led_strip_clear(led_handle));
+            }
+        }
+        led_behavior->led_status = LED_STATUS_MAX;
+        break;
+    // Do nothing
+    case LED_STATUS_MAX:
+        break;
+    default:
+        ESP_LOGE(TAG, "Not a valid event :%d", (int)led_behavior->led_status);
+        break;
     }
 }
+/*
+ *Port 1 - Led strip with RED color
+ * */
+static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
+                                 void *event_data) {
+    led_behavior(base, event_id, &leds_bahavior[0], led_strip[0].led_handle);
+}
 static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
-                                 void *event_data) {}
+                                 void *event_data) {
+    led_behavior(base, event_id, &leds_bahavior[1], led_strip[1].led_handle);
+}
 static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
-                                 void *event_data) {}
+                                 void *event_data) {
+    led_behavior(base, event_id, &leds_bahavior[2], led_strip[2].led_handle);
+}
 static void port_4_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
-                                 void *event_data) {}
+                                 void *event_data) {
+    led_behavior(base, event_id, &leds_bahavior[3], led_strip[3].led_handle);
+}
 static void port_5_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {}
 static void port_6_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {}
-
+// Timer callback function
+static void timer_callback(void *arg) {
+    printf("Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
+                      portMAX_DELAY);
+}
 void app_main(void) {
-    configure_port_en();
+    // configure_port_en();
     configure_led();
-    esp_event_loop_args_t loop_args = {.queue_size = 10,
-                                       .task_name = "event_task",
-                                       .task_priority = uxTaskPriorityGet(NULL),
-                                       .task_stack_size = 4096,
-                                       .task_core_id = tskNO_AFFINITY};
-    esp_event_loop_create(&loop_args, &event_loop_handle);
-
-    // Register event handler
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-                                             port_1_event_handler, NULL, NULL);
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-
-                                             port_2_event_handler, NULL, NULL);
-
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-                                             port_3_event_handler, NULL, NULL);
-
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-                                             port_4_event_handler, NULL, NULL);
-
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-                                             port_5_event_handler, NULL, NULL);
-
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
-                                             port_6_event_handler, NULL, NULL);
-
+    // esp_event_loop_args_t loop_args = {.queue_size = 10,
+    //                                    .task_name = "event_task",
+    //                                    .task_priority = uxTaskPriorityGet(NULL),
+    //                                    .task_stack_size = 4096,
+    //                                    .task_core_id = tskNO_AFFINITY};
+    //
+    // esp_event_loop_create(&loop_args, &event_loop_handle);
+    // // Register event handler
+    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    //                                          port_1_event_handler, NULL, NULL);
+    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    //
+    //                                          port_2_event_handler, NULL, NULL);
+    //
+    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    //                                          port_3_event_handler, NULL, NULL);
+    //
+    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    //                                          port_4_event_handler, NULL, NULL);
+    //
+    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    //                                          port_5_event_handler, NULL, NULL);
+    //
+    // esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    //                                          port_6_event_handler, NULL, NULL);
+    // // Create a timer
+    // const esp_timer_create_args_t timer_args = {.callback = &timer_callback, .name = "timer_500ms"};
+    //
+    // esp_timer_handle_t timer_handle;
+    // esp_timer_create(&timer_args, &timer_handle);
+    // ESP_LOGI(TAG, " Darwin test");
+    // // Start the timer (fires every 2 seconds)
+    // esp_timer_start_periodic(timer_handle, 5000); // Time in microseconds
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGI(TAG, "Darwin Test");
     }
 }
