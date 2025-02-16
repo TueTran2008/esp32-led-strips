@@ -30,12 +30,12 @@
 // Number of port
 #define PORT_NUMBER 6
 
-ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_1_BASE);
-ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_2_BASE);
-ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_3_BASE);
-ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_1_BASE);
-ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_2_BASE);
-ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_3_BASE);
+// ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_1_BASE);
+// ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_2_BASE);
+// ESP_EVENT_DECLARE_BASE(BUTTON_PRESS_3_BASE);
+// ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_1_BASE);
+// ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_2_BASE);
+// ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_3_BASE);
 
 ESP_EVENT_DECLARE_BASE(LED_1_EVENT_BASE);
 ESP_EVENT_DEFINE_BASE(LED_1_EVENT_BASE);
@@ -95,6 +95,17 @@ ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
 #define PORT_ON 1
 #define PORT_OFF 0
 // Define button event types
+////// IR decode value
+#define BUTTON_NEC_CODE_ON_OFF 1
+#define BUTTON_NEC_CODE_1 2
+#define BUTTON_NEC_CODE_2 3
+#define BUTTON_NEC_CODE_3 4
+#define BUTTON_NEC_CODE_4 5
+#define BUTTON_NEC_CODE_5 6
+#define BUTTON_NEC_CODE_6 7
+#define BUTTON_NEC_CODE_7 8
+#define BUTTON_NEC_CODE_8 9
+
 typedef enum {
     BUTTON_EVENT_0,
     BUTTON_EVENT_1,
@@ -131,6 +142,27 @@ typedef struct {
     led_event_t led_status;
 } led_behavior_t;
 
+typedef struct {
+    uint16_t address;
+    uint16_t command;
+} nec_code_t;
+
+typedef union {
+    struct _status {
+        uint32_t port_1_en;
+        uint32_t port_2_en;
+        uint32_t port_3_en;
+        uint32_t port_4_en;
+        uint32_t port_5_en;
+        uint32_t port_6_en;
+        uint32_t led_1_status;
+        uint32_t led_2_status;
+        uint32_t led_3_status;
+        uint32_t led_4_status;
+    } status;
+    uint32_t raw[10];
+} board_port_status_t;
+
 static const char *TAG = "led_strips";
 
 static const gpio_num_t led_strip_data_pin[LED_STRIP_NUMBER_OF_STRIP] = {
@@ -155,9 +187,8 @@ static led_strip_t led_strip[LED_STRIP_NUMBER_OF_STRIP];
 // static QueueHandle_t led_status_queue[LED_STRIP_NUMBER_OF_STRIP]; // Queue handle
 static led_behavior_t leds_behavior[LED_STRIP_NUMBER_OF_STRIP];
 
-//
-/**/
 static esp_event_loop_handle_t event_loop_handle;
+static nvs_handle_t led_nvs;
 
 /**
  * @brief Check whether a duration is within expected range
@@ -186,7 +217,7 @@ static bool nec_parse_logic1(rmt_symbol_word_t *rmt_nec_symbols) {
 /**
  * @brief Decode RMT symbols into NEC address and command
  */
-static bool nec_parse_frame(rmt_symbol_word_t *rmt_nec_symbols) {
+static bool nec_parse_frame(rmt_symbol_word_t *rmt_nec_symbols, nec_code_t *nec_code) {
     rmt_symbol_word_t *cur = rmt_nec_symbols;
     uint16_t address = 0;
     uint16_t command = 0;
@@ -217,8 +248,8 @@ static bool nec_parse_frame(rmt_symbol_word_t *rmt_nec_symbols) {
         cur++;
     }
     // save address and command
-    s_nec_code_address = address;
-    s_nec_code_command = command;
+    nec_code->address = address;
+    nec_code->address = command;
     return true;
 }
 
@@ -233,28 +264,35 @@ static bool nec_parse_frame_repeat(rmt_symbol_word_t *rmt_nec_symbols) {
 /**
  * @brief Decode RMT symbols into NEC scan code and print the result
  */
-static void example_parse_nec_frame(rmt_symbol_word_t *rmt_nec_symbols, size_t symbol_num) {
-    printf("NEC frame start---\r\n");
-    for (size_t i = 0; i < symbol_num; i++) {
-        printf("{%d:%d},{%d:%d}\r\n", rmt_nec_symbols[i].level0, rmt_nec_symbols[i].duration0,
-               rmt_nec_symbols[i].level1, rmt_nec_symbols[i].duration1);
+static esp_err_t parse_nec_frame(rmt_symbol_word_t *rmt_nec_symbols, size_t symbol_num,
+                                 nec_code_t *nec_code) {
+    esp_err_t err = ESP_FAIL;
+    if (nec_code == NULL) {
+        return err;
     }
-    printf("---NEC frame end: ");
+    ESP_LOGI(TAG, "NEC frame start---\r\n");
+    for (size_t i = 0; i < symbol_num; i++) {
+        ESP_LOGI(TAG, "{%d:%d},{%d:%d}\r\n", rmt_nec_symbols[i].level0, rmt_nec_symbols[i].duration0,
+                 rmt_nec_symbols[i].level1, rmt_nec_symbols[i].duration1);
+    }
+    ESP_LOGI(TAG, "---NEC frame end: ");
     // decode RMT symbols
     switch (symbol_num) {
     case 34: // NEC normal frame
-        if (nec_parse_frame(rmt_nec_symbols)) {
-            printf("Address=%04X, Command=%04X\r\n\r\n", s_nec_code_address, s_nec_code_command);
+        if (nec_parse_frame(rmt_nec_symbols, nec_code)) {
+            ESP_LOGI(TAG, "Address=%04X, Command=%04X\r\n\r\n", nec_code->address, nec_code->command);
+            err = ESP_OK;
         }
-        break;
+        return err;
     case 2: // NEC repeat frame
         if (nec_parse_frame_repeat(rmt_nec_symbols)) {
-            printf("Address=%04X, Command=%04X, repeat\r\n\r\n", s_nec_code_address, s_nec_code_command);
+            ESP_LOGI(TAG, "Address=%04X, Command=%04X, repeat\r\n\r\n", s_nec_code_address,
+                     s_nec_code_command);
         }
-        break;
+        return err;
     default:
-        printf("Unknown NEC frame\r\n\r\n");
-        break;
+        ESP_LOGI(TAG, "Unknown NEC frame\r\n\r\n");
+        return err;
     }
 }
 
@@ -326,73 +364,6 @@ static inline esp_err_t port_en(gpio_num_t port_number, uint32_t level) {
     return gpio_set_level(port_number, level);
 }
 
-// Task to blink LED
-// void led_1_task(void *pvParameter) {
-//
-//     while (1) {
-//         if (!on_off) {
-//             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
-//             ESP_ERROR_CHECK(led_strip_refresh(led_strip[0].led_handle));
-//             on_off = false;
-//         } else {
-//         }
-//
-//         vTaskDelay(pdMS_TO_TICKS(500));
-//     }
-// }
-//
-// void led_2_task(void *pvParameter) {
-//
-//     led_event_t status;
-//     while (1) {
-//         if (xQueueReceive(led_status_queue[1], &status, portMAX_DELAY)) {
-//             switch (status) {
-//             case LED_STATUS_ALL_TURN_OFF:
-//                 ESP_ERROR_CHECK(led_strip_clear(led_strip[1].led_handle));
-//                 break;
-//             case LED_STATUS_ALL_TURN_ON:
-//                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[1].led_handle, 0, 255, 0, 0));
-//                 ESP_ERROR_CHECK(led_strip_refresh(led_strip[1].led_handle));
-//                 break;
-//             case LED_STATUS_ALL_BLINK:
-//             case LED_STATUS_STEP_ON:
-//             case LED_STATUS_ALL_TURN_ON_10_SEC:
-//             default:
-//                 break;
-//             }
-//         }
-//
-//         vTaskDelay(pdMS_TO_TICKS(500));
-//     }
-// }
-// void led_3_task(void *pvParameter) {
-//
-//     bool on_off = false;
-//     while (1) {
-//         if (!on_off) {
-//             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
-//             ESP_ERROR_CHECK(led_strip_refresh(led_strip[0].led_handle));
-//             on_off = false;
-//         } else {
-//         }
-//
-//         vTaskDelay(pdMS_TO_TICKS(500));
-//     }
-// }
-// void led_4_task(void *pvParameter) {
-//
-//     bool on_off = false;
-//     while (1) {
-//         if (!on_off) {
-//             ESP_ERROR_CHECK(led_strip_set_pixel(led_strip[0].led_handle, 0, 255, 0, 0));
-//             ESP_ERROR_CHECK(led_strip_refresh(led_strip[0].led_handle));
-//             on_off = false;
-//         } else {
-//         }
-//
-//         vTaskDelay(pdMS_TO_TICKS(500));
-//     }
-// }
 static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t *led_behavior,
                          led_strip_handle_t led_handle) {
     if (base == LED_1_EVENT_BASE && event_id != LED_STATUS_STEP_ON) {
@@ -513,10 +484,11 @@ static void port_6_event_handler(void *handler_arg, esp_event_base_t base, int32
                                  void *event_data) {}
 // Timer callback function
 static void timer_callback(void *arg) {
-    // printf("Timer expired! Posting event...\n");
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
     esp_event_post_to(event_loop_handle, TIMER_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
                       portMAX_DELAY);
 }
+
 static void configure_ir(void) {
     ESP_LOGI(TAG, "create RMT RX channel");
 
@@ -553,9 +525,29 @@ static void configure_ir(void) {
     ESP_ERROR_CHECK(rmt_enable(rx_channel));
 }
 
-static void nvs_read() {
+static esp_err_t nvs_read_status(const char *key, uint32_t *out_val) {
+    esp_err_t err = ESP_FAIL;
 
+    err = nvs_get_u32(led_nvs, key, out_val);
+
+    switch (err) {
+    case ESP_OK:
+        ESP_LOGI(TAG, "Board led status done %d\n", (int)*out_val);
+
+        break;
+    case ESP_ERR_NVS_NOT_FOUND:
+        ESP_LOGI(TAG, "The value is not initialized yet!\n");
+        break;
+    default:
+        ESP_LOGI(TAG, "Error (%s) reading!\n", esp_err_to_name(err));
+    }
+    return err;
+}
+
+static void nvs_restore_config() {
     esp_err_t err = nvs_flash_init();
+    board_port_status_t board_status = {0};
+
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         // NVS partition was truncated and needs to be erased
         // Retry nvs_flash_init
@@ -563,60 +555,68 @@ static void nvs_read() {
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
-    printf("\n");
-    printf("Opening Non-Volatile Storage (NVS) handle... ");
-    nvs_handle_t my_handle;
-    err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    ESP_LOGI(TAG, "\n");
+    ESP_LOGI(TAG, "Opening Non-Volatile Storage (NVS) handle... ");
+    err = nvs_open("storage", NVS_READWRITE, &led_nvs);
     if (err != ESP_OK) {
-        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+        ESP_LOGI(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(err));
     } else {
-        printf("Done\n");
+        ESP_LOGI(TAG, "Done\n");
 
         // Read
-        printf("Reading restart counter from NVS ... ");
-        int32_t restart_counter = 0; // value will default to 0, if not set yet in NVS
-        err = nvs_get_i32(my_handle, "restart_counter", &restart_counter);
-        switch (err) {
-        case ESP_OK:
-            printf("Done\n");
-            printf("Restart counter = %" PRIu32 "\n", restart_counter);
-            break;
-        case ESP_ERR_NVS_NOT_FOUND:
-            printf("The value is not initialized yet!\n");
-            break;
-        default:
-            printf("Error (%s) reading!\n", esp_err_to_name(err));
-        }
-
-        // Write
-        // printf("Updating restart counter in NVS ... ");
-        // restart_counter++;
-        // err = nvs_set_i32(my_handle, "restart_counter", restart_counter);
-        // printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
-        //
-        // // Commit written value.
-        // // After setting any values, nvs_commit() must be called to ensure changes are written
-        // // to flash storage. Implementations may write to storage at other times,
-        // // but this is not guaranteed.
-        // printf("Committing updates in NVS ... ");
-        // err = nvs_commit(my_handle);
-        // printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
-        //
-        // // Close
-        nvs_close(my_handle);
+        ESP_LOGI(TAG, "Reading led_status from NVS ... ");
+        nvs_read_status("port_1_en", &board_status.status.port_1_en);
+        nvs_read_status("port_2_en", &board_status.status.port_2_en);
+        nvs_read_status("port_3_en", &board_status.status.port_3_en);
+        nvs_read_status("port_4_en", &board_status.status.port_4_en);
+        nvs_read_status("port_5_en", &board_status.status.port_5_en);
+        nvs_read_status("port_6_en", &board_status.status.port_6_en);
+        nvs_read_status("led_1_status", &board_status.status.led_1_status);
+        nvs_read_status("led_2_status", &board_status.status.led_2_status);
+        nvs_read_status("led_3_status", &board_status.status.led_3_status);
+        nvs_read_status("led_4_status", &board_status.status.led_1_status);
     }
 }
+
+/*
+ * Saving the
+ * */
+static void nvs_save_port_status(const char *key, uint32_t value) {
+    nvs_set_u32(led_nvs, key, value);
+    nvs_commit(led_nvs);
+}
+
+static void button_1_press_first_time(void) {}
+static void button_1_press_second_time(void) {}
+static void button_1_press_third_time(void) {}
+
+static void button_1_press_handler(uint32_t number_of_press_time) {
+    switch (number_of_press_time) {
+    case 0: // Press the first time
+        break;
+    case 1: // Press the second time
+        break;
+    case 3: // Press the first time
+        break;
+    default:
+        break;
+    }
+}
+
 void app_main(void) {
 
     // save the received RMT symbols
     rmt_symbol_word_t raw_symbols[64]; // 64 symbols should be sufficient for a standard NEC frame
     rmt_rx_done_event_data_t rx_data;
 
+    uint32_t last_remote_signal = 0;
+    uint32_t signal_count = 0;
+
     configure_port_en();
     configure_led();
     configure_ir();
 
-    nvs_read();
+    nvs_restore_config();
     esp_event_loop_args_t loop_args = {.queue_size = 10,
                                        .task_name = "event_task",
                                        .task_priority = uxTaskPriorityGet(NULL),
@@ -625,16 +625,25 @@ void app_main(void) {
 
     esp_event_loop_create(&loop_args, &event_loop_handle);
     // Register event handler
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, LED_1_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_1_event_handler, NULL, NULL);
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
+                                             port_1_event_handler, NULL, NULL);
+
+    esp_event_handler_instance_register_with(event_loop_handle, LED_2_EVENT_BASE, ESP_EVENT_ANY_ID,
 
                                              port_2_event_handler, NULL, NULL);
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
+                                             port_2_event_handler, NULL, NULL);
 
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, LED_3_EVENT_BASE, ESP_EVENT_ANY_ID,
+                                             port_3_event_handler, NULL, NULL);
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_3_event_handler, NULL, NULL);
 
-    esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, LED_4_EVENT_BASE, ESP_EVENT_ANY_ID,
+                                             port_4_event_handler, NULL, NULL);
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_4_event_handler, NULL, NULL);
 
     esp_event_handler_instance_register_with(event_loop_handle, ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID,
@@ -647,24 +656,46 @@ void app_main(void) {
 
     esp_timer_handle_t timer_handle;
     esp_timer_create(&timer_args, &timer_handle);
-    // Start the timer (fires every 2 seconds)
     esp_timer_start_periodic(timer_handle, 5000); // Time in microseconds
     ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
     while (1) {
         // wait for RX done signal
         if (xQueueReceive(receive_queue, &rx_data, pdMS_TO_TICKS(1000)) == pdPASS) {
+            uint32_t control_value = 0;
+            nec_code_t nec_code = {0};
             // parse the receive symbols and print the result
-            example_parse_nec_frame(rx_data.received_symbols, rx_data.num_symbols);
+            parse_nec_frame(rx_data.received_symbols, rx_data.num_symbols, &nec_code);
+            switch (control_value) {
+            case BUTTON_NEC_CODE_1:
+                button_1_press_handler(signal_count);
+                break;
+            case BUTTON_NEC_CODE_2:
+                break;
+            case BUTTON_NEC_CODE_3:
+                break;
+            case BUTTON_NEC_CODE_4:
+                break;
+            case BUTTON_NEC_CODE_5:
+                break;
+            case BUTTON_NEC_CODE_6:
+                break;
+            case BUTTON_NEC_CODE_7:
+                break;
+            case BUTTON_NEC_CODE_8:
+                break;
+            case BUTTON_NEC_CODE_ON_OFF:
+                break;
+            default:
+                ESP_LOGW(TAG, "Invalid signal from remote: %d", (int)control_value);
+                break;
+            }
+            if (last_remote_signal == control_value) {
+                signal_count++;
+            } else {
+                signal_count = 0;
+            }
             // start receive again
             ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
-        } else {
-            // timeout, transmit predefined IR NEC packets
-            // const ir_nec_scan_code_t scan_code = {
-            //     .address = 0x0440,
-            //     .command = 0x3003,
-            // };
-            // ESP_ERROR_CHECK(
-            //     rmt_transmit(tx_channel, nec_encoder, &scan_code, sizeof(scan_code), &transmit_config));
         }
     }
 }
