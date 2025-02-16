@@ -16,7 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "ir_nec_encoder.h"
+// #include "ir_nec_encoder.h"
 #include "led_strip.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -583,11 +583,11 @@ static void configure_ir(void) {
                                                    // 12000000ns > 9000us, the receive won't stop early
 
     ESP_LOGI(TAG, "install IR NEC encoder");
-    ir_nec_encoder_config_t nec_encoder_cfg = {
-        .resolution = EXAMPLE_IR_RESOLUTION_HZ,
-    };
-    rmt_encoder_handle_t nec_encoder = NULL;
-    ESP_ERROR_CHECK(rmt_new_ir_nec_encoder(&nec_encoder_cfg, &nec_encoder));
+    // ir_nec_encoder_config_t nec_encoder_cfg = {
+    //     .resolution = EXAMPLE_IR_RESOLUTION_HZ,
+    // };
+    // rmt_encoder_handle_t nec_encoder = NULL;
+    // ESP_ERROR_CHECK(rmt_new_ir_nec_encoder(&nec_encoder_cfg, &nec_encoder));
     ESP_ERROR_CHECK(rmt_enable(rx_channel));
 }
 
