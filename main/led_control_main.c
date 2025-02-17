@@ -361,6 +361,10 @@ static void timer_1_500ms_callback(void *arg);
 static void timer_2_500ms_callback(void *arg);
 static void timer_3_500ms_callback(void *arg);
 static void timer_4_500ms_callback(void *arg);
+static void timer_1_10s_callback(void *args);
+static void timer_2_10s_callback(void *args);
+static void timer_3_10s_callback(void *args);
+static void timer_4_10s_callback(void *args);
 
 // Initialize the button handler array with function pointers for all buttons
 remote_control_handle_t button_handler[BUTTON_NUMBER][BUTTON_PRESS_MAX_TIMES] = {
@@ -379,7 +383,11 @@ static esp_timer_create_args_t timer_500_ms_args[LED_STRIP_NUMBER_OF_STRIP],
     timer_10_s_args[LED_STRIP_NUMBER_OF_STRIP];
 static timer_callback_handler_t timer_500_ms_callback[LED_STRIP_NUMBER_OF_STRIP] = {
     timer_1_500ms_callback, timer_2_500ms_callback, timer_3_500ms_callback, timer_4_500ms_callback};
-static esp_timer_handle_t timer_500_ms_handle[LED_STRIP_NUMBER_OF_STRIP] /*, timer_10_s_handle*/;
+static timer_callback_handler_t timer_10_s_callback[LED_STRIP_NUMBER_OF_STRIP] = {
+    timer_1_10s_callback, timer_2_10s_callback, timer_3_10s_callback, timer_4_10s_callback};
+
+static esp_timer_handle_t timer_500_ms_handle[LED_STRIP_NUMBER_OF_STRIP],
+    timer_10_s_handle[LED_STRIP_NUMBER_OF_STRIP];
 
 /**
  * @brief Check whether a duration is within expected range
@@ -635,6 +643,11 @@ static void timer_handler_500ms_start_stop(esp_timer_handle_t handler, int32_t e
         }
     }
 }
+static void timer_handler_10s_start_top(esp_timer_handle_t handler, int32_t event_id) {
+    if (event_id == LED_STATUS_ALL_BLINK_10_SEC) {
+        esp_timer_start_once(handler, 100000000);
+    }
+}
 /*
  *Port 1 - Led strip with RED color
  * */
@@ -650,6 +663,7 @@ static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32
         leds_behavior[0].led_status = event_id;
         nvs_save_port_status("led_1_status", event_id);
         timer_handler_500ms_start_stop(timer_500_ms_handle[0], event_id);
+        timer_handler_10s_start_top(timer_10_s_handle[0], event_id);
     }
     led_behavior(base, event_id, &leds_behavior[0], led_strip[0].led_handle, 1, TIMER_1_EVENT_BASE);
 }
@@ -664,6 +678,7 @@ static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32
             leds_behavior[1].led_index = 0;
         }
         timer_handler_500ms_start_stop(timer_500_ms_handle[1], event_id);
+        timer_handler_10s_start_top(timer_10_s_handle[1], event_id);
         leds_behavior[1].led_status = event_id;
         nvs_save_port_status("led_2_status", event_id);
     }
@@ -680,6 +695,7 @@ static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32
             leds_behavior[2].led_index = 0;
         }
         timer_handler_500ms_start_stop(timer_500_ms_handle[2], event_id);
+        timer_handler_10s_start_top(timer_10_s_handle[2], event_id);
         leds_behavior[2].led_status = event_id;
         nvs_save_port_status("led_3_status", event_id);
     }
@@ -697,6 +713,7 @@ static void port_4_event_handler(void *handler_arg, esp_event_base_t base, int32
         leds_behavior[3].led_status = event_id;
         nvs_save_port_status("led_4_status", event_id);
         timer_handler_500ms_start_stop(timer_500_ms_handle[3], event_id);
+        timer_handler_10s_start_top(timer_10_s_handle[3], event_id);
     }
     led_behavior(base, event_id, &leds_behavior[3], led_strip[3].led_handle, 4, TIMER_4_EVENT_BASE);
 }
@@ -719,6 +736,26 @@ static void timer_3_500ms_callback(void *arg) {
 static void timer_4_500ms_callback(void *arg) {
     // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
     esp_event_post_to(event_loop_handle, TIMER_4_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_1_10s_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_1_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_10S, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_2_10s_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_2_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_10S, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_3_10s_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_3_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_10S, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_4_10s_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_4_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_10S, NULL, 0,
                       portMAX_DELAY);
 }
 
@@ -993,10 +1030,12 @@ static void restore_port_status(void) {
 
 static void timer_initialize(void) {
     for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
-        char name[20] = {0};
-        sprintf(name, "timer_%d_500ms", i + 1);
         timer_500_ms_args[i].callback = timer_500_ms_callback[i];
         esp_timer_create(&timer_500_ms_args[i], &timer_500_ms_handle[i]);
+    }
+    for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
+        timer_10_s_args[i].callback = timer_10_s_callback[i];
+        esp_timer_create(&timer_10_s_args[i], &timer_10_s_handle[i]);
     }
 }
 
