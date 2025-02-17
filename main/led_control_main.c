@@ -37,17 +37,86 @@
 // ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_2_BASE);
 // ESP_EVENT_DEFINE_BASE(BUTTON_PRESS_3_BASE);
 
+/**
+ * @brief Base event for LED 1.
+ */
 ESP_EVENT_DECLARE_BASE(LED_1_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for LED 1.
+ */
 ESP_EVENT_DEFINE_BASE(LED_1_EVENT_BASE);
+
+/**
+ * @brief Base event for LED 2.
+ */
 ESP_EVENT_DECLARE_BASE(LED_2_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for LED 2.
+ */
 ESP_EVENT_DEFINE_BASE(LED_2_EVENT_BASE);
+
+/**
+ * @brief Base event for LED 3.
+ */
 ESP_EVENT_DECLARE_BASE(LED_3_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for LED 3.
+ */
 ESP_EVENT_DEFINE_BASE(LED_3_EVENT_BASE);
+
+/**
+ * @brief Base event for LED 4.
+ */
 ESP_EVENT_DECLARE_BASE(LED_4_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for LED 4.
+ */
 ESP_EVENT_DEFINE_BASE(LED_4_EVENT_BASE);
 
-ESP_EVENT_DECLARE_BASE(TIMER_EVENT_BASE);
-ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
+/**
+ * @brief Base event for timer events.
+ */
+ESP_EVENT_DECLARE_BASE(TIMER_1_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for timer events.
+ */
+ESP_EVENT_DEFINE_BASE(TIMER_1_EVENT_BASE);
+
+/**
+ * @brief Base event for timer events.
+ */
+ESP_EVENT_DECLARE_BASE(TIMER_2_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for timer events.
+ */
+ESP_EVENT_DEFINE_BASE(TIMER_2_EVENT_BASE);
+
+/**
+ * @brief Base event for timer events.
+ */
+ESP_EVENT_DECLARE_BASE(TIMER_3_EVENT_BASE);
+/**
+ * @brief Definition of the base event for timer events.
+ */
+ESP_EVENT_DEFINE_BASE(TIMER_3_EVENT_BASE);
+
+/**
+ * @brief Base event for timer events.
+ */
+ESP_EVENT_DECLARE_BASE(TIMER_4_EVENT_BASE);
+
+/**
+ * @brief Definition of the base event for timer events.
+ */
+ESP_EVENT_DEFINE_BASE(TIMER_4_EVENT_BASE);
+
+#define TIMER_EVENT_BASE(port) TIMER_##port##_EVENT_BASE
 
 #define EXAMPLE_IR_RX_GPIO_NUM 19
 #define EXAMPLE_IR_RESOLUTION_HZ 1000000 // 1MHz resolution, 1 tick = 1us
@@ -94,10 +163,64 @@ ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
 #define LED_EN_PORT_POWER_5 GPIO_NUM_27
 #define LED_EN_PORT_POWER_6 GPIO_NUM_14
 
-#define PORT_ON 1
-#define PORT_OFF 0
-// Define button event types
-////// IR decode value
+/**
+ * @file led_control_main.c
+ * @brief This file contains the definitions for the PORT_ON and PORT_OFF constants.
+ */
+
+#define PORT_ON 1  /**< Constant representing the state of a port being turned on. */
+#define PORT_OFF 0 /**< Constant representing the state of a port being turned off. */
+
+/**
+ * @file led_control_main.c
+ * @brief This file contains the definitions of button event types for IR decoding.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_ON_OFF
+ * @brief Button event type for the "ON/OFF" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_1
+ * @brief Button event type for the "1" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_2
+ * @brief Button event type for the "2" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_3
+ * @brief Button event type for the "3" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_4
+ * @brief Button event type for the "4" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_5
+ * @brief Button event type for the "5" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_6
+ * @brief Button event type for the "6" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_7
+ * @brief Button event type for the "7" button.
+ */
+
+/**
+ * @def BUTTON_NEC_CODE_8
+ * @brief Button event type for the "8" button.
+ */
+
 #define BUTTON_NEC_CODE_ON_OFF 1
 #define BUTTON_NEC_CODE_1 2
 #define BUTTON_NEC_CODE_2 3
@@ -108,22 +231,27 @@ ESP_EVENT_DEFINE_BASE(TIMER_EVENT_BASE);
 #define BUTTON_NEC_CODE_7 8
 #define BUTTON_NEC_CODE_8 9
 
+/**
+ * @brief Enumeration representing different button events.
+ */
 typedef enum {
-    BUTTON_EVENT_0,
-    BUTTON_EVENT_1,
-    BUTTON_EVENT_2,
-    BUTTON_EVENT_3,
-    BUTTON_EVENT_4,
-    BUTTON_EVENT_5,
-    BUTTON_EVENT_6,
-    BUTTON_EVENT_7,
-    BUTTON_EVENT_8
+    BUTTON_EVENT_0, /**< Button event 0 */
+    BUTTON_EVENT_1, /**< Button event 1 */
+    BUTTON_EVENT_2, /**< Button event 2 */
+    BUTTON_EVENT_3, /**< Button event 3 */
+    BUTTON_EVENT_4, /**< Button event 4 */
+    BUTTON_EVENT_5, /**< Button event 5 */
+    BUTTON_EVENT_6, /**< Button event 6 */
+    BUTTON_EVENT_7, /**< Button event 7 */
+    BUTTON_EVENT_8  /**< Button event 8 */
 } button_event_t;
 
+/**
+ * @brief Structure representing an LED strip.
+ */
 typedef struct led_strip_t {
-    led_strip_handle_t led_handle;
-    led_strip_config_t led_config;
-    uint32_t led_power_en;
+    led_strip_handle_t led_handle; /**< Handle for the LED strip. */
+    led_strip_config_t led_config; /**< Configuration for the LED strip. */
 } led_strip_t;
 
 typedef enum { LED_COLOR_OFF, LED_COLOR_RED, LED_COLOR_BLUE } led_color_t;
@@ -165,7 +293,10 @@ typedef union {
     uint32_t raw[10];
 } board_port_status_t;
 
+typedef enum { TIMER_EVENT_ID_TIMEOUT_500MS, TIMER_EVENT_ID_TIMEOUT_10S } timer_event_id_t;
+
 typedef void (*remote_control_handle_t)(void);
+typedef void (*timer_callback_handler_t)(void *args);
 
 static const char *TAG = "led_strips";
 
@@ -185,13 +316,12 @@ static rmt_channel_handle_t rx_channel = NULL;
 static QueueHandle_t receive_queue;
 static rmt_receive_config_t receive_config;
 
-typedef enum { TIMER_EVENT_ID_TIMEOUT_500MS, TIMER_EVENT_ID_TIMEOUT_10S } timer_event_id_t;
-
 static led_strip_t led_strip[LED_STRIP_NUMBER_OF_STRIP];
-// static QueueHandle_t led_status_queue[LED_STRIP_NUMBER_OF_STRIP]; // Queue handle
+
 static led_behavior_t leds_behavior[LED_STRIP_NUMBER_OF_STRIP];
 
 static esp_event_loop_handle_t event_loop_handle;
+
 static nvs_handle_t led_nvs;
 
 //**Forward declaration for button handler*//
@@ -227,13 +357,11 @@ static void button_7_press_first_time(void);
 static void button_7_press_second_time(void);
 static void button_7_press_third_time(void);
 
-// static void button_8_press_first_time(void);
-// static void button_8_press_second_time(void);
-// static void button_8_press_third_time(void);
-//
-// static void button_9_press_first_time(void);
-// static void button_9_press_second_time(void);
-// static void button_9_press_third_time(void);
+static void timer_1_500ms_callback(void *arg);
+static void timer_2_500ms_callback(void *arg);
+static void timer_3_500ms_callback(void *arg);
+static void timer_4_500ms_callback(void *arg);
+
 // Initialize the button handler array with function pointers for all buttons
 remote_control_handle_t button_handler[BUTTON_NUMBER][BUTTON_PRESS_MAX_TIMES] = {
     {button_1_press_first_time, button_1_press_second_time, button_1_press_third_time}, // Button 1
@@ -246,6 +374,12 @@ remote_control_handle_t button_handler[BUTTON_NUMBER][BUTTON_PRESS_MAX_TIMES] = 
     {NULL, NULL, NULL},                                                                 // Button 8
     {NULL, NULL, NULL}                                                                  // Button 9
 };
+
+static esp_timer_create_args_t timer_500_ms_args[LED_STRIP_NUMBER_OF_STRIP],
+    timer_10_s_args[LED_STRIP_NUMBER_OF_STRIP];
+static timer_callback_handler_t timer_500_ms_callback[LED_STRIP_NUMBER_OF_STRIP] = {
+    timer_1_500ms_callback, timer_2_500ms_callback, timer_3_500ms_callback, timer_4_500ms_callback};
+static esp_timer_handle_t timer_500_ms_handle[LED_STRIP_NUMBER_OF_STRIP] /*, timer_10_s_handle*/;
 
 /**
  * @brief Check whether a duration is within expected range
@@ -365,8 +499,12 @@ static bool example_rmt_rx_done_callback(rmt_channel_handle_t channel, const rmt
 ///////////////////////////////////////START LED CODE////////////////////////////////////////////////////////
 
 /*
- * @brief initialization the RGB Led pin and RMT peripheral drivers
- * */
+ * @brief Initialization of the RGB LED pin and RMT peripheral drivers.
+ *
+ * This function configures the RGB LED strip by setting the GPIO pin, maximum number of LEDs,
+ * LED model, color component format, and output inversion for each strip. It also configures
+ * the RMT (Remote Control) backend for the LED strip.
+ */
 void configure_led(void) {
     for (uint32_t strip_index = 0; strip_index < (sizeof(led_strip) / sizeof(led_strip[0])); strip_index++) {
         led_strip[strip_index].led_config.strip_gpio_num = led_strip_data_pin[strip_index];
@@ -378,11 +516,11 @@ void configure_led(void) {
 
     // LED strip backend configuration: RMT
     led_strip_rmt_config_t rmt_config = {
-        .clk_src = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
-        .resolution_hz = LED_STRIP_RMT_RES_HZ, // RMT counter clock frequency
-        .mem_block_symbols = 64,               // the memory size of each RMT channel, in words (4 bytes)
+        .clk_src = RMT_CLK_SRC_DEFAULT, // Different clock source can lead to different power consumption.
+        .resolution_hz = LED_STRIP_RMT_RES_HZ, // RMT counter clock frequency.
+        .mem_block_symbols = 64,               // The memory size of each RMT channel, in words (4 bytes).
         .flags = {
-            .with_dma = false, // DMA feature is available on chips like ESP32-S3/P4
+            .with_dma = false, // DMA feature is available on chips like ESP32-S3/P4.
         }};
 
     for (int strip_index = 0; strip_index < (sizeof(led_strip) / sizeof(led_strip[0])); strip_index++) {
@@ -422,7 +560,8 @@ static inline esp_err_t port_en(gpio_num_t port_number, uint32_t level) {
 }
 
 static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t *led_behavior,
-                         led_strip_handle_t led_handle) {
+                         led_strip_handle_t led_handle, uint32_t port_number,
+                         esp_event_base_t target_timer_base) {
     switch (led_behavior->led_status) {
     case LED_STATUS_ALL_TURN_OFF:
         ESP_ERROR_CHECK(led_strip_clear(led_handle));
@@ -432,7 +571,7 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
         ESP_ERROR_CHECK(led_strip_refresh(led_handle));
         break;
     case LED_STATUS_ALL_BLINK:
-        if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == TIMER_EVENT_BASE) {
+        if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == target_timer_base) {
             if (led_behavior->led_off_on) {
                 // Turn on all led
                 for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
@@ -448,7 +587,7 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
         }
         break;
     case LED_STATUS_STEP_ON:
-        if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == TIMER_EVENT_BASE) {
+        if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == target_timer_base) {
             ESP_ERROR_CHECK(led_strip_clear(led_handle));
             ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, led_behavior->led_index, 255, 0, 0));
             ESP_ERROR_CHECK(led_strip_refresh(led_handle));
@@ -456,7 +595,7 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
         }
         break;
     case LED_STATUS_ALL_BLINK_10_SEC:
-        if (base == TIMER_EVENT_BASE) {
+        if (base == target_timer_base) {
             if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS) {
                 if (led_behavior->led_off_on_10_s) {
                     // Turn on all led
@@ -484,9 +623,20 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
         break;
     }
 }
-/*
 
-*Port 1 - Led strip with RED color
+static void timer_handler_500ms_start_stop(esp_timer_handle_t handler, int32_t event_id) {
+    if (event_id == LED_STATUS_ALL_BLINK) {
+        if (esp_timer_is_active(handler) == false) {
+            esp_timer_start_periodic(handler, 5000);
+        }
+    } else {
+        if (esp_timer_is_active(handler)) {
+            esp_timer_stop(handler);
+        }
+    }
+}
+/*
+ *Port 1 - Led strip with RED color
  * */
 static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
@@ -498,9 +648,10 @@ static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32
             leds_behavior[0].led_index = 0;
         }
         leds_behavior[0].led_status = event_id;
+        nvs_save_port_status("led_1_status", event_id);
+        timer_handler_500ms_start_stop(timer_500_ms_handle[0], event_id);
     }
-    led_behavior(base, event_id, &leds_behavior[0], led_strip[0].led_handle);
-    nvs_save_port_status("led_1_status", event_id);
+    led_behavior(base, event_id, &leds_behavior[0], led_strip[0].led_handle, 1, TIMER_1_EVENT_BASE);
 }
 
 static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
@@ -512,12 +663,13 @@ static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32
         if (event_id != LED_STATUS_STEP_ON) {
             leds_behavior[1].led_index = 0;
         }
-
+        timer_handler_500ms_start_stop(timer_500_ms_handle[1], event_id);
         leds_behavior[1].led_status = event_id;
+        nvs_save_port_status("led_2_status", event_id);
     }
-
-    led_behavior(base, event_id, &leds_behavior[1], led_strip[1].led_handle);
+    led_behavior(base, event_id, &leds_behavior[1], led_strip[1].led_handle, 2, TIMER_2_EVENT_BASE);
 }
+
 static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
     if (base == LED_3_EVENT_BASE) {
@@ -527,11 +679,11 @@ static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32
         if (event_id != LED_STATUS_STEP_ON) {
             leds_behavior[2].led_index = 0;
         }
-
+        timer_handler_500ms_start_stop(timer_500_ms_handle[2], event_id);
         leds_behavior[2].led_status = event_id;
+        nvs_save_port_status("led_3_status", event_id);
     }
-
-    led_behavior(base, event_id, &leds_behavior[2], led_strip[2].led_handle);
+    led_behavior(base, event_id, &leds_behavior[2], led_strip[2].led_handle, 3, TIMER_3_EVENT_BASE);
 }
 static void port_4_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
@@ -542,16 +694,31 @@ static void port_4_event_handler(void *handler_arg, esp_event_base_t base, int32
         if (event_id != LED_STATUS_STEP_ON) {
             leds_behavior[3].led_index = 0;
         }
-
         leds_behavior[3].led_status = event_id;
+        nvs_save_port_status("led_4_status", event_id);
+        timer_handler_500ms_start_stop(timer_500_ms_handle[3], event_id);
     }
-
-    led_behavior(base, event_id, &leds_behavior[3], led_strip[3].led_handle);
+    led_behavior(base, event_id, &leds_behavior[3], led_strip[3].led_handle, 4, TIMER_4_EVENT_BASE);
 }
 // Timer callback function
-static void timer_500ms_callback(void *arg) {
+static void timer_1_500ms_callback(void *arg) {
     // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
-    esp_event_post_to(event_loop_handle, TIMER_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
+    esp_event_post_to(event_loop_handle, TIMER_1_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_2_500ms_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_2_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_3_500ms_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_3_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
+                      portMAX_DELAY);
+}
+static void timer_4_500ms_callback(void *arg) {
+    // ESP_LOGI(TAG,"Timer expired! Posting event...\n");
+    esp_event_post_to(event_loop_handle, TIMER_4_EVENT_BASE, TIMER_EVENT_ID_TIMEOUT_500MS, NULL, 0,
                       portMAX_DELAY);
 }
 
@@ -581,13 +748,6 @@ static void configure_ir(void) {
                                                    // 560us, valid signal won't be treated as noise
     receive_config.signal_range_max_ns = 12000000; // the longest duration for NEC signal is 9000us,
                                                    // 12000000ns > 9000us, the receive won't stop early
-
-    ESP_LOGI(TAG, "install IR NEC encoder");
-    // ir_nec_encoder_config_t nec_encoder_cfg = {
-    //     .resolution = EXAMPLE_IR_RESOLUTION_HZ,
-    // };
-    // rmt_encoder_handle_t nec_encoder = NULL;
-    // ESP_ERROR_CHECK(rmt_new_ir_nec_encoder(&nec_encoder_cfg, &nec_encoder));
     ESP_ERROR_CHECK(rmt_enable(rx_channel));
 }
 
@@ -627,10 +787,6 @@ static void nvs_restore_config() {
     } else {
         ESP_LOGI(TAG, "Done\n");
         ESP_LOGI(TAG, "Reading led_status from NVS ... ");
-        // nvs_read_status("port_1_en", &board_status.status.port_1_en);
-        // nvs_read_status("port_2_en", &board_status.status.port_2_en);
-        // nvs_read_status("port_3_en", &board_status.status.port_3_en);
-        // nvs_read_status("port_4_en", &board_status.status.port_4_en);
         nvs_read_status("port_5_en", &board_status.status.port_5_en);
         nvs_read_status("port_6_en", &board_status.status.port_6_en);
         nvs_read_status("led_1_status", &board_status.status.led_1_status);
@@ -821,14 +977,34 @@ static void button_9_press_handler(uint32_t number_of_press_time) {
     nvs_save_port_status("port_5_en", board_status.status.port_5_en);
 }
 
+static void restore_port_status(void) {
+    port_en(LED_EN_PORT_POWER_5, board_status.status.port_5_en);
+    port_en(LED_EN_PORT_POWER_6, board_status.status.port_6_en);
+
+    esp_event_post_to(event_loop_handle, LED_1_EVENT_BASE, board_status.status.led_1_status, NULL, 0,
+                      portMAX_DELAY);
+    esp_event_post_to(event_loop_handle, LED_2_EVENT_BASE, board_status.status.led_2_status, NULL, 0,
+                      portMAX_DELAY);
+    esp_event_post_to(event_loop_handle, LED_3_EVENT_BASE, board_status.status.led_3_status, NULL, 0,
+                      portMAX_DELAY);
+    esp_event_post_to(event_loop_handle, LED_4_EVENT_BASE, board_status.status.led_4_status, NULL, 0,
+                      portMAX_DELAY);
+}
+
+static void timer_initialize(void) {
+    for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
+        char name[20] = {0};
+        sprintf(name, "timer_%d_500ms", i + 1);
+        timer_500_ms_args[i].callback = timer_500_ms_callback[i];
+        esp_timer_create(&timer_500_ms_args[i], &timer_500_ms_handle[i]);
+    }
+}
+
 void app_main(void) {
 
     // save the received RMT symbols
     rmt_symbol_word_t raw_symbols[64]; // 64 symbols should be sufficient for a standard NEC frame
     rmt_rx_done_event_data_t rx_data = {0};
-    esp_timer_handle_t timer_500_ms_handle /*, timer_10_s_handle*/;
-    const esp_timer_create_args_t timer_500_ms_args = {.callback = &timer_500ms_callback,
-                                                       .name = "timer_500ms"};
 
     uint32_t last_remote_signal = 0xFFFFFFFF;
     uint32_t signal_count = 1;
@@ -849,39 +1025,31 @@ void app_main(void) {
     // Register event handler
     esp_event_handler_instance_register_with(event_loop_handle, LED_1_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_1_event_handler, NULL, NULL);
-    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_1_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_1_event_handler, NULL, NULL);
 
     esp_event_handler_instance_register_with(event_loop_handle, LED_2_EVENT_BASE, ESP_EVENT_ANY_ID,
 
                                              port_2_event_handler, NULL, NULL);
-    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_2_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_2_event_handler, NULL, NULL);
 
     esp_event_handler_instance_register_with(event_loop_handle, LED_3_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_3_event_handler, NULL, NULL);
-    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_3_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_3_event_handler, NULL, NULL);
 
     esp_event_handler_instance_register_with(event_loop_handle, LED_4_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_4_event_handler, NULL, NULL);
-    esp_event_handler_instance_register_with(event_loop_handle, TIMER_EVENT_BASE, ESP_EVENT_ANY_ID,
+    esp_event_handler_instance_register_with(event_loop_handle, TIMER_4_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_4_event_handler, NULL, NULL);
     // const esp_timer_create_args_t timer_10s_args = {.callback = &timer_500ms_callback, .name =
     // "timer_500ms"};
+    timer_initialize();
+    // esp_timer_start_periodic(timer_500_ms_handle, 5000); // Time in microseconds
 
-    esp_timer_create(&timer_500_ms_args, &timer_500_ms_handle);
-    esp_timer_start_periodic(timer_500_ms_handle, 5000); // Time in microseconds
-    port_en(LED_EN_PORT_POWER_5, board_status.status.port_5_en);
-    port_en(LED_EN_PORT_POWER_6, board_status.status.port_6_en);
-    esp_event_post_to(event_loop_handle, LED_1_EVENT_BASE, board_status.status.led_1_status, NULL, 0,
-                      portMAX_DELAY);
-    esp_event_post_to(event_loop_handle, LED_2_EVENT_BASE, board_status.status.led_2_status, NULL, 0,
-                      portMAX_DELAY);
-    esp_event_post_to(event_loop_handle, LED_3_EVENT_BASE, board_status.status.led_3_status, NULL, 0,
-                      portMAX_DELAY);
-    esp_event_post_to(event_loop_handle, LED_4_EVENT_BASE, board_status.status.led_4_status, NULL, 0,
-                      portMAX_DELAY);
+    // Restore last port status
+    restore_port_status();
 
     ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
     while (1) {
