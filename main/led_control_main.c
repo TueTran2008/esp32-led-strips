@@ -22,6 +22,9 @@
 #include "nvs_flash.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include <unistd.h>
+
+#include "esp_console.h"
 
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
 #define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000)
@@ -570,36 +573,41 @@ static inline esp_err_t port_en(gpio_num_t port_number, uint32_t level) {
 static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t *led_behavior,
                          led_strip_handle_t led_handle, uint32_t port_number,
                          esp_event_base_t target_timer_base) {
+    ESP_LOGI(TAG,"Led status %d - Event_source:%s - event_id :%d", led_behavior->led_status, base, (int)event_id);
     switch (led_behavior->led_status) {
     case LED_STATUS_ALL_TURN_OFF:
-        ESP_ERROR_CHECK(led_strip_clear(led_handle));
+        // ESP_ERROR_CHECK(led_strip_clear(led_handle));
         break;
     case LED_STATUS_ALL_TURN_ON:
-        ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, 0, 255, 0, 0));
-        ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+        // ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, 0, 255, 0, 0));
+        // ESP_ERROR_CHECK(led_strip_refresh(led_handle));
         break;
     case LED_STATUS_ALL_BLINK:
         if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == target_timer_base) {
             if (led_behavior->led_off_on) {
                 // Turn on all led
                 for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
-                    ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, i, 255, 0, 0));
+                    // ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, i, 255, 0, 0));
                 }
-                ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+                // ESP_ERROR_CHECK(led_strip_refresh(led_handle));
                 led_behavior->led_off_on = false;
             } else {
                 led_behavior->led_off_on = true;
 
-                ESP_ERROR_CHECK(led_strip_clear(led_handle));
+                // ESP_ERROR_CHECK(led_strip_clear(led_handle));
             }
         }
         break;
     case LED_STATUS_STEP_ON:
         if (event_id == TIMER_EVENT_ID_TIMEOUT_500MS && base == target_timer_base) {
-            ESP_ERROR_CHECK(led_strip_clear(led_handle));
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, led_behavior->led_index, 255, 0, 0));
-            ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+            // ESP_ERROR_CHECK(led_strip_clear(led_handle));
+            // ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, led_behavior->led_index, 255, 0, 0));
+            // ESP_ERROR_CHECK(led_strip_refresh(led_handle));
             led_behavior->led_index++;
+            if (led_behavior->led_index >= LED_STRIP_LED_COUNT) {
+                led_behavior->led_index = 0;
+            }
+            ESP_LOGI(TAG, "%s led index:%d", base, (int)led_behavior->led_index);
         }
         break;
     case LED_STATUS_ALL_BLINK_10_SEC:
@@ -608,17 +616,17 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
                 if (led_behavior->led_off_on_10_s) {
                     // Turn on all led
                     for (int i = 0; i < LED_STRIP_NUMBER_OF_STRIP; i++) {
-                        ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, i, 255, 0, 0));
+                        // ESP_ERROR_CHECK(led_strip_set_pixel(led_handle, i, 255, 0, 0));
                     }
-                    ESP_ERROR_CHECK(led_strip_refresh(led_handle));
+                    // ESP_ERROR_CHECK(led_strip_refresh(led_handle));
                     led_behavior->led_off_on_10_s = false;
                 } else {
                     led_behavior->led_off_on_10_s = true;
-                    ESP_ERROR_CHECK(led_strip_clear(led_handle));
+                    // ESP_ERROR_CHECK(led_strip_clear(led_handle));
                 }
             } else if (event_id == TIMER_EVENT_ID_TIMEOUT_10S) {
                 led_behavior->led_off_on_10_s = false;
-                ESP_ERROR_CHECK(led_strip_clear(led_handle));
+                // ESP_ERROR_CHECK(led_strip_clear(led_handle));
                 led_behavior->led_status = LED_STATUS_MAX;
             }
         }
@@ -633,9 +641,9 @@ static void led_behavior(esp_event_base_t base, int32_t event_id, led_behavior_t
 }
 
 static void timer_handler_500ms_start_stop(esp_timer_handle_t handler, int32_t event_id) {
-    if (event_id == LED_STATUS_ALL_BLINK) {
+    if (event_id == LED_STATUS_ALL_BLINK || event_id == LED_STATUS_STEP_ON) {
         if (esp_timer_is_active(handler) == false) {
-            esp_timer_start_periodic(handler, 5000);
+            esp_timer_start_periodic(handler, 500000);
         }
     } else {
         if (esp_timer_is_active(handler)) {
@@ -654,6 +662,7 @@ static void timer_handler_10s_start_top(esp_timer_handle_t handler, int32_t even
 static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
     if (base == LED_1_EVENT_BASE) {
+        ESP_LOGI(TAG, "Event received: Base=%s, ID=%d\n", base, (int)event_id);
         if (event_id > LED_STATUS_MAX) {
             ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
         }
@@ -666,11 +675,13 @@ static void port_1_event_handler(void *handler_arg, esp_event_base_t base, int32
         timer_handler_10s_start_top(timer_10_s_handle[0], event_id);
     }
     led_behavior(base, event_id, &leds_behavior[0], led_strip[0].led_handle, 1, TIMER_1_EVENT_BASE);
+    // printf("End of %s", __FUNCTION__);
 }
 
 static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
     if (base == LED_2_EVENT_BASE) {
+        ESP_LOGI(TAG, "Event received: Base=%s, ID=%d\n", base, (int)event_id);
         if (event_id > LED_STATUS_MAX) {
             ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
         }
@@ -688,6 +699,7 @@ static void port_2_event_handler(void *handler_arg, esp_event_base_t base, int32
 static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
     if (base == LED_3_EVENT_BASE) {
+        ESP_LOGI(TAG, "Event received: Base=%s, ID=%d\n", base, (int)event_id);
         if (event_id > LED_STATUS_MAX) {
             ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
         }
@@ -704,6 +716,7 @@ static void port_3_event_handler(void *handler_arg, esp_event_base_t base, int32
 static void port_4_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id,
                                  void *event_data) {
     if (base == LED_4_EVENT_BASE) {
+        ESP_LOGI(TAG, "Event received: Base=%s, ID=%d\n", base, (int)event_id);
         if (event_id > LED_STATUS_MAX) {
             ESP_LOGE(TAG, "Invalid led status event_id :%d", (int)event_id);
         }
@@ -842,11 +855,13 @@ static void nvs_save_port_status(const char *key, uint32_t value) {
 }
 ///////////////////////////////////////////////////////////////////////////
 static void button_1_press_first_time(void) {
+    ESP_LOGI(TAG, "Start button 1 handler");
     esp_event_post_to(event_loop_handle, LED_1_EVENT_BASE, LED_STATUS_ALL_TURN_ON, NULL, 0, portMAX_DELAY);
     esp_event_post_to(event_loop_handle, LED_2_EVENT_BASE, LED_STATUS_ALL_TURN_ON, NULL, 0, portMAX_DELAY);
     esp_event_post_to(event_loop_handle, LED_3_EVENT_BASE, LED_STATUS_ALL_TURN_ON, NULL, 0, portMAX_DELAY);
 
     esp_event_post_to(event_loop_handle, LED_4_EVENT_BASE, LED_STATUS_ALL_TURN_ON, NULL, 0, portMAX_DELAY);
+    ESP_LOGI(TAG, "End button 1 handler");
 }
 static void button_1_press_second_time(void) {
     esp_event_post_to(event_loop_handle, LED_1_EVENT_BASE, LED_STATUS_ALL_BLINK, NULL, 0, portMAX_DELAY);
@@ -864,8 +879,11 @@ static void button_1_press_third_time(void) {
 }
 /////////////////////////////////////////////////////////////////////
 static void button_1_press_handler(uint32_t number_of_press_time) {
-    if (button_handler[0][number_of_press_time])
+    if (button_handler[0][number_of_press_time]) {
+        ESP_LOGI(TAG, "Button handler");
         button_handler[0][number_of_press_time]();
+    }
+    ESP_LOGI(TAG, "Button 1 handler - number of pressed time :%d", (int)number_of_press_time);
 }
 
 static void button_2_press_first_time(void) {
@@ -1039,25 +1057,44 @@ static void timer_initialize(void) {
     }
 }
 
+static int hello_cmd(int argc, char **argv) {
+    static int button = 0;
+    button = atoi(argv[1]);
+    ESP_LOGI(TAG, "Sending button signal :%d", button);
+
+    xQueueSend(receive_queue, &button, pdMS_TO_TICKS(1000));
+    return 0;
+}
+
 void app_main(void) {
 
     // save the received RMT symbols
     rmt_symbol_word_t raw_symbols[64]; // 64 symbols should be sufficient for a standard NEC frame
-    rmt_rx_done_event_data_t rx_data = {0};
+    // rmt_rx_done_event_data_t rx_data = {0};
+    uint32_t rx_data = 0;
 
     uint32_t last_remote_signal = 0xFFFFFFFF;
-    uint32_t signal_count = 1;
+    uint32_t signal_count = 0;
     bool reset_count = false;
+
+    esp_console_repl_t *repl = NULL;
+    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+    /* Prompt to be printed before each line.
+     * This can be customized, made dynamic, etc.
+     */
+    repl_config.prompt = "DarwinTest"
+                         ">";
+    repl_config.max_cmdline_length = 254;
 
     configure_port_en();
     configure_led();
     configure_ir();
 
     nvs_restore_config();
-    esp_event_loop_args_t loop_args = {.queue_size = 10,
+    esp_event_loop_args_t loop_args = {.queue_size = 40,
                                        .task_name = "event_task",
                                        .task_priority = uxTaskPriorityGet(NULL),
-                                       .task_stack_size = 4096,
+                                       .task_stack_size = 4096 * 4,
                                        .task_core_id = tskNO_AFFINITY};
 
     esp_event_loop_create(&loop_args, &event_loop_handle);
@@ -1082,27 +1119,41 @@ void app_main(void) {
                                              port_4_event_handler, NULL, NULL);
     esp_event_handler_instance_register_with(event_loop_handle, TIMER_4_EVENT_BASE, ESP_EVENT_ANY_ID,
                                              port_4_event_handler, NULL, NULL);
+    esp_event_dump(stdout);
     // const esp_timer_create_args_t timer_10s_args = {.callback = &timer_500ms_callback, .name =
     // "timer_500ms"};
     timer_initialize();
+    const esp_console_cmd_t cmd = {.command = "hello",
+                                   .help = "Prints 'Hello, ESP32 Console!'",
+                                   .hint = NULL,
+                                   .func = &hello_cmd,
+                                   .argtable = NULL};
+    esp_console_cmd_register(&cmd);
+    /* Register commands */
+    esp_console_register_help_command();
+    esp_console_dev_uart_config_t hw_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_new_repl_uart(&hw_config, &repl_config, &repl));
+    ESP_ERROR_CHECK(esp_console_start_repl(repl));
+    // register_system_common();
     // esp_timer_start_periodic(timer_500_ms_handle, 5000); // Time in microseconds
 
     // Restore last port status
-    restore_port_status();
+    //restore_port_status();
 
     ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
     while (1) {
         // wait for RX done signal
+
         if (xQueueReceive(receive_queue, &rx_data, pdMS_TO_TICKS(1000)) == pdPASS) {
-            uint32_t control_value = 0;
+            uint32_t control_value = rx_data;
+            ESP_LOGI(TAG, "Receving control data:%d", (int)control_value);
             nec_code_t nec_code = {0};
             // parse the receive symbols and print the result
-            parse_nec_frame(rx_data.received_symbols, rx_data.num_symbols, &nec_code);
+            // parse_nec_frame(rx_data.received_symbols, rx_data.num_symbols, &nec_code);
             switch (control_value) {
             case BUTTON_NEC_CODE_1:
                 button_2_press_handler(signal_count);
                 if (signal_count >= 1) {
-                    signal_count = 0;
                     reset_count = true;
                 }
                 break;
@@ -1116,28 +1167,24 @@ void app_main(void) {
             case BUTTON_NEC_CODE_3:
                 button_4_press_handler(signal_count);
                 if (signal_count >= 2) {
-                    signal_count = 0;
                     reset_count = true;
                 }
                 break;
             case BUTTON_NEC_CODE_4:
                 button_5_press_handler(signal_count);
                 if (signal_count >= 2) {
-                    signal_count = 0;
                     reset_count = true;
                 }
                 break;
             case BUTTON_NEC_CODE_5:
                 button_6_press_handler(signal_count);
                 if (signal_count >= 2) {
-                    signal_count = 0;
                     reset_count = true;
                 }
                 break;
             case BUTTON_NEC_CODE_6:
                 button_7_press_handler(signal_count);
                 if (signal_count >= 2) {
-                    signal_count = 0;
                     reset_count = true;
                 }
                 break;
@@ -1148,26 +1195,32 @@ void app_main(void) {
                 button_9_press_handler(signal_count);
                 break;
             case BUTTON_NEC_CODE_ON_OFF:
+                ESP_LOGI(TAG, "Button ON/OFF pressed");
                 button_1_press_handler(signal_count);
                 if (signal_count >= 2) {
-                    signal_count = 0;
+                    reset_count = true;
                 }
                 break;
             default:
                 ESP_LOGW(TAG, "Invalid signal from remote: %d", (int)control_value);
                 break;
             }
+            ESP_LOGI(TAG, "Button :%d press %d times", (int)control_value, (int)signal_count);
             if (last_remote_signal == control_value) {
                 if (reset_count) {
                     reset_count = false;
+                    signal_count = 0;
                 } else {
                     signal_count++;
                 }
             } else {
                 signal_count = 0;
             }
+            last_remote_signal = control_value;
+
+            // esp_event_dump(stdout);
             // start receive again
-            ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
+            // ESP_ERROR_CHECK(rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config));
         }
     }
 }
